@@ -1,0 +1,8 @@
+---
+config: {}
+specs:
+    disk: null
+    port: /dev/ttyACM0
+    probe: jlink
+target: psoc6wifibt_pioneerkit
+...

@@ -1,0 +1,6 @@
+{
+    "python.autoComplete.extraPaths": [
+        "${env:HOME}/.zerynth2/dist/r2.6.0/stdlib",
+        "${env:HOME}/.zerynth2/dist/r2.6.0/libs/official"
+    ]
+}
