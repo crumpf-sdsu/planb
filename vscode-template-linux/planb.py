@@ -58,6 +58,7 @@ x_test = test_set[: n_past, 0]
 y_test = test_set[n_past : n_past + n_future, 0]
 x_test, y_test = np.array(x_test), np.array(y_test)
 x_test = np.reshape(x_test, (1, x_test.shape[0], 1))
+print("xtest: ", x_test)
 predicted_temperature = regressor.predict(x_test)
 
 print('Predicted temperature {}'.format(predicted_temperature))
