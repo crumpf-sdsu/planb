@@ -115,14 +115,13 @@ int main()
     DigitalOut led(LED1);
 
     // LCD Initialization
-    lcd1.SetFont(&Font16);
+    lcd1.SetFont(&Font12);
     lcd1.Clear(LCD_COLOR_BLUE);
     lcd1.SetBackColor(LCD_COLOR_BLUE);
     lcd1.SetTextColor(LCD_COLOR_WHITE);
     lcd1.DisplayStringAt(0, LINE(1), (uint8_t *)"Mr. Rumpf's PlanB", CENTER_MODE);
     lcd1.DisplayStringAt(0, LINE(2), (uint8_t *)"Weather Prediction Using TensorFlowLite", CENTER_MODE);
     lcd1.DisplayStringAt(0, LINE(3), (uint8_t *)"NOAA Dataset", CENTER_MODE);
-    lcd1.DrawHLine(110, 70, 250);
 
     // Hardware initialization sleep for DHT22 
     wait_ms(INIT_SLEEP_RATE_MS);
@@ -134,6 +133,9 @@ int main()
     while(1){
         // Incriment number of hours (uptime)
         hours_counted++;
+        sprintf(str, "RUN #%d", hours_counted);
+        lcd1.DisplayStringAt(0, LINE(5), (uint8_t *)str, CENTER_MODE);
+        lcd1.DrawHLine(110, 70, 250);
 
         // Flip the LED
         led = !led;
@@ -142,18 +144,26 @@ int main()
         err = sensor.readData();
         float t = sensor.getTemperatureF();
         if (err == 0) {
-            sprintf(str, "Run %d: Current Temperature : %4.2f F", hours_counted, t);
+            sprintf(str, "Current Temperature : %4.2f F", t);
         } else {
-            sprintf(str, "Run %d: Err %i", hours_counted, err);
+            sprintf(str, "Error %i", hours_counted, err);
         }
-        lcd1.DisplayStringAt(0, LINE(6), (uint8_t *)str, CENTER_MODE);
+        lcd1.DisplayStringAt(0, LINE(7), (uint8_t *)str, CENTER_MODE);
         insert(t);
+
+        // Print the past 7 temps (model input) to LCD
+        char temps[40] = "";
+        for(int i=0; i<STACK_SIZE; ++i) {
+            sprintf(temps, "%s %4.1f", temps, past_temps[i]);
+        }
+        sprintf(str, "Last 7 Temps: %s", temps);
+        lcd1.DisplayStringAt(0, LINE(8), (uint8_t *)str, CENTER_MODE);
 
         // Predict weather for the next 1 hour
         //pt = loop(past_temps);
         pt++;
-        sprintf(str, "Run %d: Predicted Temperature : %4.2f F", hours_counted, pt);
-        lcd1.DisplayStringAt(0, LINE(7), (uint8_t *)str, CENTER_MODE);
+        sprintf(str, "PREDICTED TEMPERATURE FOR NEXT 1 HOUR : %4.2f F", pt);
+        lcd1.DisplayStringAt(0, LINE(11), (uint8_t *)str, CENTER_MODE);
         
         // Print some debug insights
         printf("\r\nHour #: %d\r\n", hours_counted);
