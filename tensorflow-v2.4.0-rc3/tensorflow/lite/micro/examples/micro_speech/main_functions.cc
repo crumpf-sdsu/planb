@@ -26,6 +26,8 @@ limitations under the License.
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
+#include "tensorflow/lite/micro/all_ops_resolver.h"
+
 
 // Globals, used for compatibility with Arduino-style sketches.
 namespace {
@@ -36,6 +38,8 @@ TfLiteTensor* model_input = nullptr;
 FeatureProvider* feature_provider = nullptr;
 RecognizeCommands* recognizer = nullptr;
 int32_t previous_time = 0;
+TfLiteTensor* input = nullptr;
+TfLiteTensor* output = nullptr;
 
 // Create an area of memory to use for input, output, and intermediate arrays.
 // The size of this will depend on the model you're using, and may need to be
@@ -65,31 +69,13 @@ void setup() {
     return;
   }
 
-  // Pull in only the operation implementations we need.
-  // This relies on a complete list of all the ops needed by this graph.
-  // An easier approach is to just use the AllOpsResolver, but this will
-  // incur some penalty in code space for op implementations that are not
-  // needed by this graph.
-  //
-  // tflite::AllOpsResolver resolver;
+  // This pulls in all the operation implementations we need.
   // NOLINTNEXTLINE(runtime-global-variables)
-  static tflite::MicroMutableOpResolver<4> micro_op_resolver(error_reporter);
-  if (micro_op_resolver.AddDepthwiseConv2D() != kTfLiteOk) {
-    return;
-  }
-  if (micro_op_resolver.AddFullyConnected() != kTfLiteOk) {
-    return;
-  }
-  if (micro_op_resolver.AddSoftmax() != kTfLiteOk) {
-    return;
-  }
-  if (micro_op_resolver.AddReshape() != kTfLiteOk) {
-    return;
-  }
+  static tflite::AllOpsResolver resolver;
 
   // Build an interpreter to run the model with.
   static tflite::MicroInterpreter static_interpreter(
-      model, micro_op_resolver, tensor_arena, kTensorArenaSize, error_reporter);
+      model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
   interpreter = &static_interpreter;
 
   // Allocate memory from the tensor_arena for the model's tensors.
@@ -99,77 +85,46 @@ void setup() {
     return;
   }
 
-  // Get information about the memory area to use for the model's input.
-  model_input = interpreter->input(0);
-  if ((model_input->dims->size != 2) || (model_input->dims->data[0] != 1) ||
-      (model_input->dims->data[1] !=
-       (kFeatureSliceCount * kFeatureSliceSize)) ||
-      (model_input->type != kTfLiteInt8)) {
-    TF_LITE_REPORT_ERROR(error_reporter,
-                         "Bad input tensor parameters in model");
-    return;
-  }
-  model_input_buffer = model_input->data.int8;
-
-  // Prepare to access the audio spectrograms from a microphone or other source
-  // that will provide the inputs to the neural network.
-  // NOLINTNEXTLINE(runtime-global-variables)
-  static FeatureProvider static_feature_provider(kFeatureElementCount,
-                                                 feature_buffer);
-  feature_provider = &static_feature_provider;
-
-  static RecognizeCommands static_recognizer(error_reporter);
-  recognizer = &static_recognizer;
-
-  previous_time = 0;
+  // Obtain pointers to the model's input and output tensors.
+  input = interpreter->input(0);
+  output = interpreter->output(0);
 }
 
 // The name of this function is important for Arduino compatibility.
-void loop() {
-  // Fetch the spectrogram for the current time.
-  const int32_t current_time = LatestAudioTimestamp();
-  int how_many_new_slices = 0;
-  TfLiteStatus feature_status = feature_provider->PopulateFeatureData(
-      error_reporter, previous_time, current_time, &how_many_new_slices);
-  if (feature_status != kTfLiteOk) {
-    TF_LITE_REPORT_ERROR(error_reporter, "Feature generation failed");
-    return;
-  }
-  previous_time = current_time;
-  // If no new audio samples have been received since last time, don't bother
-  // running the network model.
-  if (how_many_new_slices == 0) {
-    return;
-  }
+float loop(float x_vals[]) {
+  // Calculate an x value to feed into the model. We compare the current
+  // inference_count to the number of inferences per cycle to determine
+  // our position within the range of possible x values the model was
+  // trained on, and use this to calculate a value.
+  //float position = static_cast<float>(inference_count) /
+  //                 static_cast<float>(kInferencesPerCycle);
+  //float x_val = position * kXrange;
 
-  // Copy feature buffer to input tensor
-  for (int i = 0; i < kFeatureElementCount; i++) {
-    model_input_buffer[i] = feature_buffer[i];
+  // Place our calculated x value in the model's input tensor
+  int len = (int)sizeof(x_vals)/sizeof(x_vals[0]);
+  printf("\r\nSizeof x_vals == %d\r\n", len);
+  for( int i=0; i<len; ++i ) {
+    input->data.f[i] = x_vals[i];
   }
-
-  // Run the model on the spectrogram input and make sure it succeeds.
+  
+  // Run inference, and report any error
   TfLiteStatus invoke_status = interpreter->Invoke();
   if (invoke_status != kTfLiteOk) {
-    TF_LITE_REPORT_ERROR(error_reporter, "Invoke failed");
-    return;
+    TF_LITE_REPORT_ERROR(error_reporter, "Invoke failed on x_val: %f\n",
+                         static_cast<double>(x_vals[0]));
+    return 0;
   }
 
-  // Obtain a pointer to the output tensor
-  TfLiteTensor* output = interpreter->output(0);
-  // Determine whether a command was recognized based on the output of inference
-  const char* found_command = nullptr;
-  uint8_t score = 0;
-  bool is_new_command = false;
-  TfLiteStatus process_status = recognizer->ProcessLatestResults(
-      output, current_time, &found_command, &score, &is_new_command);
-  if (process_status != kTfLiteOk) {
-    TF_LITE_REPORT_ERROR(error_reporter,
-                         "RecognizeCommands::ProcessLatestResults() failed");
-    return;
-  }
-  // Do something based on the recognized command. The default implementation
-  // just prints to the error console, but you should replace this with your
-  // own function for a real application.
-  RespondToCommand(error_reporter, current_time, found_command, score,
-                   is_new_command);
+  // Read the predicted y value from the model's output tensor
+  float y_val = output->data.f[0];
+
+  // Output the results. A custom HandleOutput function can be implemented
+  // for each supported hardware target.
+  //HandleOutput(error_reporter, x_val, y_val);
+  char str[80];
+  sprintf(str, "Predicted Temperature : %4.2f F", y_val);
+  printf("%s",str);
+
+
+  return output->data.f[0];
 }
